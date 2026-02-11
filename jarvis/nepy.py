@@ -13,12 +13,23 @@ import json # Import json for parsing API responses
 import db_utils
 import sounddevice as sd
 import numpy as np
-import speech_recognition as sr
 import random
+
+from process_command import process_command
 
 # Load environment variables from temp_dir/.env
 dotenv_path = os.path.join(os.path.dirname(__file__), '../temp_dir/.env')
 load_dotenv(dotenv_path)
+
+import socket
+
+def is_internet_available():
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=3)
+        return True
+    except OSError:
+        return False
+
 
 # Initialize Translator
 translator = Translator()
@@ -38,6 +49,37 @@ import pygame
 import time
 import os
 import re
+
+HEALTH_KEYWORDS = [
+    "not feeling well", "feeling sick", "i am sick",
+    "headache", "fever", "pain", "dizzy", "weak",
+    "can't breathe", "chest pain"
+]
+
+EMOTION_KEYWORDS = [
+    "sad", "lonely", "tired", "depressed",
+    "anxious", "scared", "worried", "upset"
+]
+
+
+
+def handle_health_issue():
+    responses = [
+        "I'm sorry you're not feeling well. Please sit down and take slow breaths.",
+        "That doesn't sound nice. Would you like me to call a family member?",
+        "Please drink some water. If this continues, we should seek help."
+    ]
+    return random.choice(responses)
+
+
+def handle_emotional_support():
+    responses = [
+        "I'm here with you. You are not alone.",
+        "It's alright to feel this way. Take your time.",
+        "Would you like me to stay and talk for a while?"
+    ]
+    return random.choice(responses)
+
 
 def clean_text(text):
     return re.sub(r'[^A-Za-z0-9\s]', '', text)
@@ -63,52 +105,22 @@ def speak(text):
     except Exception as e:
         print(f"Voice error: {e}")
 
-# Listen to mic
-# def listen():
-#     r = sr.Recognizer()
-#     with sr.Microphone() as source:
-#         print("Available audio devices:")
-#         for i, name in enumerate(sr.Microphone.list_microphone_names()):
-#         print(f"Log: {i}: {name}")
-#         print("Listening...")
-#         # Corrected: Removed space in adjust_for_ambient_noise
-#         r.adjust_for_ambient_noise(source, duration=1)  # Increased duration
-#         try:
-#             audio = r.listen(source, timeout=7, phrase_time_limit=10)  # Increased timeout and phrase_time_limit
-#             print("Recognizing...")
-#             # Add this line to check if audio is None
-#             if audio is None:
-#                 print("Log: Audio data is None")
-#                 return ""
-#             query = r.recognize_google(audio)
-#             print("You:", query)
-#             return query
-#         except sr.WaitTimeoutError:
-#             speak("I didn't hear anything. Please try again.")
-#             return ""
-#         except sr.UnknownValueError:
-#             speak("Sorry, I couldn't understand what you said.")
-#             return ""
-#         except sr.RequestError as e:
-#             speak(f"Could not request results from Google Speech Recognition service; {e}")
-#             return ""
-#         except Exception as e:
-#             print(f"An unexpected error occurred during listening: {e}")
-#             return ""
 
-def listen():
+def listen(show_error=True):
     r = sr.Recognizer()
-    fs = 44100  # Sample rate
-    duration = 5  # seconds of listening time
+    fs = 44100
+    duration = 5
 
-    print("Listening... 🎤")
+    if show_error:
+        print("Listening... 🎤")
+
     try:
-        # Record audio for a few seconds
         audio_data = sd.rec(int(duration * fs), samplerate=fs, channels=1, dtype='int16')
-        sd.wait()  # Wait until recording is finished
-        print("Recognizing...")
+        sd.wait()
 
-        # Convert recorded data into recognizer-compatible format
+        if show_error:
+            print("Recognizing...")
+
         audio = sr.AudioData(audio_data.tobytes(), fs, 2)
         query = r.recognize_google(audio)
 
@@ -116,64 +128,79 @@ def listen():
         return query
 
     except sr.UnknownValueError:
-        speak("Sorry, I couldn’t understand what you said.")
+        if show_error:
+            speak("Sorry, I couldn’t understand what you said.")
         return ""
+
     except sr.RequestError:
-        speak("Speech recognition service is unavailable.")
+        if show_error:
+            speak("Speech recognition service is unavailable.")
         return ""
+
     except Exception as e:
         print(f"Listening error: {e}")
-        speak("There was a problem listening. Please try again.")
+        if show_error:
+            speak("There was a problem listening.")
         return ""
-    
-# Call Gemini API
-def get_gemini_response(prompt: str) -> str:
-    # IMPORTANT: Replace "YOUR_GEMINI_API_KEY_HERE" with your actual Gemini API key.
-    # You can get one from Google AI Studio: https://aistudio.google.com/
-    apiKey = os.getenv("GEMINI_API_KEY")
-    if apiKey is None:
-        print("Log: Gemini API key not found in .env file.")
-        return "Gemini API key not found in .env file."
-    apiUrl = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={apiKey}"
 
-    persona_prompt = "Act as a kind and caring British caretaker for an elderly person. Speak in short, gentle sentences with a warm, supportive tone. Use language a traditional British caretaker would use. If the user seems sad or tired, offer emotional support like a friend or nurse would. Your response should be less than 50 words."
-    prompt = f"{persona_prompt} {prompt}"
-    chatHistory = []
-    # Corrected: Use .append() for Python lists instead of .push()
-    chatHistory.append({ "role": "user", "parts": [{ "text": prompt }] })
+
+# Call Gemini API
+def get_gemini_response(prompt):
+    
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "I cannot reach my online assistant right now."
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+
+    caretaker_prompt = (
+        "You are a kind British caretaker speaking to an elderly person. "
+        "Use calm, short sentences. Be reassuring. Less than 50 words.\n"
+        f"User: {prompt}"
+    )
 
     payload = {
-        "contents": chatHistory
+        "contents": [
+            {"role": "user", "parts": [{"text": caretaker_prompt}]}
+        ]
     }
 
     try:
-        # Make the fetch call using requests library for Python
-        response = requests.post(apiUrl, headers={'Content-Type': 'application/json'}, json=payload, timeout=60)
-        response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+        res = requests.post(url, json=payload, timeout=15)
+        res.raise_for_status()
+        data = res.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            return "I'm getting too many questions at once. Please give me a moment."
+        return "I am having trouble reaching my intelligence service."
 
-        result = response.json()
-
-        if result.get("candidates") and len(result["candidates"]) > 0 and \
-           result["candidates"][0].get("content") and result["candidates"][0]["content"].get("parts") and \
-           len(result["candidates"][0]["content"]["parts"]) > 0:
-            text = result["candidates"][0]["content"]["parts"][0]["text"]
-            return text
-        else:
-            print(f"Gemini API response structure unexpected: {result}")
-            return "I received an unexpected response from the AI."
-    except requests.exceptions.Timeout:
-        return "The AI took too long to respond. Please try again."
-    except requests.exceptions.ConnectionError:
-        return "I couldn't connect to the AI service. Please check your internet connection."
-    except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred: {http_err} - Response: {response.text}")
-        return f"An HTTP error occurred while contacting the AI: {http_err}. Please check the API key and service status."
-    except json.JSONDecodeError:
-        print(f"Failed to decode JSON from response: {response.text}")
-        return "I received an unreadable response from the AI."
     except Exception as e:
-        print(f"An unexpected error occurred while getting Gemini response: {e}")
-        return "I encountered an error while processing your request with the AI."
+        print("GEMINI ERROR:", e)
+        return "I am having trouble reaching my intelligence service."
+
+
+
+def get_response(command):
+    if interaction_count % 5 == 0:
+        speak("Just checking in. Are you comfortable?")
+
+    intent = detect_health_or_emotion(command)
+
+    # 1️⃣ HEALTH FIRST (OFFLINE)
+    if intent == "health":
+        return handle_health_issue()
+
+    # 2️⃣ EMOTIONAL SUPPORT (OFFLINE)
+    if intent == "emotion":
+        return handle_emotional_support()
+
+    # 3️⃣ ONLINE AI IF AVAILABLE
+    if is_internet_available():
+        return get_gemini_response(command)
+
+    # 4️⃣ FINAL OFFLINE FALLBACK
+    return "I may not have all the answers, but I am here with you."
 
 
 # Function to get user's name
@@ -236,17 +263,129 @@ def get_feedback():
     else:
         speak("Sorry, I didn't understand. Please say yes or no.")
         return get_feedback()
+    
+global assistant_awake
+
+def detect_health_or_emotion(command):
+    for k in HEALTH_KEYWORDS:
+        if k in command:
+            return "health"
+    for k in EMOTION_KEYWORDS:
+        if k in command:
+            return "emotion"
+    for k in CARE_KEYWORDS:
+        if k in command:
+            return "care"
+
+    return None
+
+def handle_health_issue():
+    return random.choice([
+        "I'm sorry you're not feeling well. Please sit down and take slow breaths.",
+        "That sounds uncomfortable. Please drink some water and rest.",
+        "I'm here with you. If this gets worse, we should ask for help."
+    ])
+
+def handle_emotional_support():
+    return random.choice([
+        "I'm here with you. You are not alone.",
+        "It's alright to feel this way. Take your time.",
+        "Would you like me to stay and talk for a bit?"
+    ])
+
+def get_natural_time():
+    now = datetime.datetime.now()
+
+    hour = now.strftime("%I").lstrip("0")  # removes leading zero
+    minute = now.strftime("%M")
+
+    if minute == "00":
+        minute_speech = "o clock"
+    elif minute.startswith("0"):
+        minute_speech = "oh " + minute[1]
+    else:
+        minute_speech = minute
+
+    period = now.strftime("%p").lower()
+
+    if period == "am":
+        period_speech = "in the morning"
+    elif int(hour) < 6:
+        period_speech = "in the afternoon"
+    else:
+        period_speech = "in the evening"
+
+    return f"It is {hour} {minute_speech} {period_speech}"
+
+CARE_KEYWORDS = [
+    "tired",
+    "weak",
+    "not okay",
+    "bad day",
+    "no energy",
+    "exhausted"
+]
+
+interaction_count = 0
+
+
+def handle_care_mode():
+    return random.choice([
+        "You sound tired. Please try to sit down and rest for a moment.",
+        "Let us slow things down. Would you like some calming music?",
+        "Please remember to take care of yourself. I am right here with you.",
+        "Would you like me to remind you to drink some water?"
+    ])
+
 
 # Handle commands
 def process_command(command):
+    global interaction_count
+    interaction_count += 1
+
     command = command.lower()
 
+
     if "time" in command:
-        now = datetime.datetime.now().strftime("%H:%M:%S")
-        response = f"The time is {now}"
+        response = get_natural_time()
         speak(response)
         return response
 
+    if "stop listening" in command or "go to sleep" in command:
+        global assistant_awake
+        assistant_awake = False
+        speak("Alright. Call me if you need me.")
+        return
+
+
+    intent = detect_health_or_emotion(command)
+
+    if intent == "health":
+        response = handle_health_issue()
+        speak(response)
+        return response
+
+    if intent == "emotion":
+        response = handle_emotional_support()
+        speak(response)
+        return response
+
+    if intent == "care":
+        response = handle_care_mode()
+        speak(response)
+        return response
+
+        # -------- DEFAULT AI BRAIN --------
+
+    if is_internet_available():
+
+        print("Calling Gemini...")  # DEBUG LINE
+
+        response = get_gemini_response(command)
+
+        speak(response)
+        return response
+ 
     elif "open" in command:
         if "chrome" in command:
             response = "Opening Chrome"
@@ -321,6 +460,20 @@ def process_command(command):
             response = "Please tell me your city and state. For example, 'I live in London England'."
             speak(response)
             return response
+
+    elif "water" in command or "hydrated" in command:
+        response = "Please take a few sips of water. Staying hydrated is important."
+        speak(response)
+        return response
+
+    elif "stop listening" in command or "go to sleep" in command:
+
+        speak("Alright. Call me if you need me.")
+        
+     
+        assistant_awake = False
+        
+        return
 
     elif "weather" in command:
         city_match = None
@@ -441,11 +594,35 @@ def process_command(command):
         exit()
 
     else:
-        # Use Gemini for general queries
-        response = "Let me think about that."
-        speak(response)
-        response = get_gemini_response(command)
-        response = adjust_response(response)
+        # 🩺 Health & Emotion First (OFFLINE SAFE)
+        intent = detect_health_or_emotion(command)
+
+        if intent == "health":
+            response = handle_health_issue()
+            speak(response)
+            return response
+
+        if intent == "care":
+            response = handle_care_mode()
+            speak(response)
+            return response
+
+
+        if intent == "emotion":
+            response = handle_emotional_support()
+            speak(response)
+            return response
+
+        # 🌐 Online AI (Gemini) if Internet Available
+        if is_internet_available():
+            speak("Let me think about that.")
+            response = get_gemini_response(command)
+            response = adjust_response(response)
+            speak(response)
+            return response
+
+        # 📴 Final Offline Fallback
+        response = "I'm here with you. Let's take this slowly."
         speak(response)
         return response
 
@@ -462,54 +639,61 @@ def save_reward_data(data):
     with open("reward_data.json", "w") as f:
         json.dump(data, f, indent=2)
 
-# Get the current reward score
-def get_reward_score():
-    data = load_reward_data()
-    return data["reward_score"]
+def get_greeting():
+    hour = datetime.datetime.now().hour
 
-# Update the reward score based on feedback
-def update_reward(response, positive_feedback):
-    data = load_reward_data()
-    reward = 0.1 if positive_feedback else -0.05  # Adjust reward values as needed
-    data["reward_score"] += reward
-    data["reward_score"] = max(0, data["reward_score"])  # Ensure reward score doesn't go below zero
-    save_reward_data(data)
-
-# Adjust bot behavior based on reward score
-def adjust_response(response):
-    reward_score = get_reward_score()
-    if reward_score > 5:
-        # Example: Add a positive affirmation
-        response = f"{response} I'm glad I could help!"
-    elif reward_score < -2:
-        # Example: Apologize and offer alternative
-        response = f"I'm sorry I couldn't help. Perhaps I can try a different approach?"
-    return response
-
-def get_feedback():
-    speak("Was that helpful?")
-    feedback = listen().lower()
-    if "yes" in feedback:
-        return True
-    elif "no" in feedback:
-        return False
+    if hour < 12:
+        return "Good morning. How are you feeling today?"
+    elif hour < 18:
+        return "Good afternoon. I hope you are comfortable."
     else:
-        speak("Sorry, I didn't understand. Please say yes or no.")
-        return get_feedback()
+        return "Good evening. How has your day been?"
+
+def wake_response():
+    return random.choice([
+        "Yes?",
+        "I'm listening.",
+        "How can I help?",
+        "Tell me."
+    ])
+assistant_awake = False
+
 
 if __name__ == "__main__":
-    if engine is None:
-        print("TTS engine failed to initialize. Exiting.")
-        exit()
 
-    speak("Hello, I am Jarvis. How can I help you?")
+    speak(get_greeting())
+
+    # ⭐ ADD THIS LINE
+    speak("Say Jarvis whenever you need me.")
+
     while True:
-        command = listen()
-        if command and command.lower().startswith("jarvis"): # Only process if a command was recognized and starts with "jarvis"
-            command = command[6:].strip() # Remove "jarvis" from the command
-            response = process_command(command)
 
-            # Get user feedback and update reward
-            helpful = get_feedback()
-            update_reward(response, helpful)
-            print(f"New reward score: {get_reward_score()}")
+        # -------- SLEEP MODE --------
+        if not assistant_awake:
+
+            print("Waiting for wake word...")
+
+            wake = listen(show_error=False).lower()
+
+            if not wake:
+                continue
+
+            if "jarvis" in wake:
+                assistant_awake = True
+                speak(wake_response())
+
+            continue
+
+
+        # -------- ACTIVE MODE --------
+        command = listen(show_error=True).lower()
+
+        if not command:
+            continue
+
+        if "stop" in command or "go to sleep" in command:
+            speak("Alright. Call me if you need me.")
+            assistant_awake = False
+            continue
+
+        process_command(command)
