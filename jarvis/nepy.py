@@ -14,6 +14,9 @@ import db_utils
 import sounddevice as sd
 import numpy as np
 import random
+import pywhatkit
+
+from local_llm import ask_ollama
 
 from process_command import process_command
 
@@ -60,25 +63,6 @@ EMOTION_KEYWORDS = [
     "sad", "lonely", "tired", "depressed",
     "anxious", "scared", "worried", "upset"
 ]
-
-
-
-def handle_health_issue():
-    responses = [
-        "I'm sorry you're not feeling well. Please sit down and take slow breaths.",
-        "That doesn't sound nice. Would you like me to call a family member?",
-        "Please drink some water. If this continues, we should seek help."
-    ]
-    return random.choice(responses)
-
-
-def handle_emotional_support():
-    responses = [
-        "I'm here with you. You are not alone.",
-        "It's alright to feel this way. Take your time.",
-        "Would you like me to stay and talk for a while?"
-    ]
-    return random.choice(responses)
 
 
 def clean_text(text):
@@ -340,291 +324,112 @@ def handle_care_mode():
 
 # Handle commands
 def process_command(command):
-    global interaction_count
-    interaction_count += 1
 
+    global assistant_awake
     command = command.lower()
 
-
-    if "time" in command:
-        response = get_natural_time()
-        speak(response)
-        return response
-
+    # ---------- STOP ----------
     if "stop listening" in command or "go to sleep" in command:
-        global assistant_awake
         assistant_awake = False
         speak("Alright. Call me if you need me.")
         return
 
 
+    # ---------- TIME ----------
+    if "time" in command:
+        response = get_natural_time()
+        speak(response)
+        return
+
+    # ---------- PLAY ON YOUTUBE ----------
+# ---------- PLAY MUSIC ----------
+    if command.startswith("play"):
+
+        song = command.replace("play", "").strip()
+
+        if song:
+            speak(f"Alright. Playing {song} for you.")
+
+            try:
+                pywhatkit.playonyt(song)
+
+            except Exception as e:
+                print("YouTube error:", e)
+                speak("I could not play that right now.")
+
+            return
+
+
+    # ---------- OPEN APPS ----------
+    if "open chrome" in command:
+        speak("Opening Chrome")
+        pyautogui.press("win")
+        pyautogui.write("chrome")
+        pyautogui.press("enter")
+        return
+
+    if "open notepad" in command:
+        speak("Opening Notepad")
+        pyautogui.press("win")
+        pyautogui.write("notepad")
+        pyautogui.press("enter")
+        return
+
+    if "open youtube" in command:
+        webbrowser.open("https://youtube.com")
+        speak("Opening YouTube")
+        return
+
+
+    # ---------- CARE DETECTION ----------
     intent = detect_health_or_emotion(command)
 
     if intent == "health":
-        response = handle_health_issue()
-        speak(response)
-        return response
+        speak(handle_health_issue())
+        return
 
     if intent == "emotion":
-        response = handle_emotional_support()
-        speak(response)
-        return response
+        speak(handle_emotional_support())
+        return
 
     if intent == "care":
-        response = handle_care_mode()
-        speak(response)
-        return response
+        speak(handle_care_mode())
+        return
 
-        # -------- DEFAULT AI BRAIN --------
 
+ # ---------- LOCAL LLM FIRST ----------
+    print("Trying LOCAL LLM...")
+
+    local_reply = ask_ollama(command)
+
+    if local_reply and len(local_reply.strip()) > 5:
+
+        print("LOCAL LLM USED")
+        speak(local_reply)
+        return local_reply
+
+
+    # ---------- CLOUD BACKUP ----------
     if is_internet_available():
 
-        print("Calling Gemini...")  # DEBUG LINE
+        print("Falling back to GEMINI...")
 
         response = get_gemini_response(command)
 
         speak(response)
-        return response
- 
-    elif "open" in command:
-        if "chrome" in command:
-            response = "Opening Chrome"
-            speak(response)
-            pyautogui.press("win")
-            pyautogui.write("chrome")
-            pyautogui.press("enter")
-            return response
-        elif "notepad" in command:
-            response = "Opening Notepad"
-            speak(response)
-            pyautogui.press("win")
-            pyautogui.write("notepad")
-            pyautogui.press("enter")
-            return response
-        elif "youtube" in command:
-            webbrowser.open("https://youtube.com")
-            response = "Opening YouTube"
-            speak(response)
-            return response
-        else:
-            response = "I can open Chrome, Notepad, or YouTube. What would you like to open?"
-            speak(response)
-            
-        # Add a return statement here
         
 
-    elif "my name is" in command:
-        name = command.replace("my name is", "").strip()
-        if name:
-            user_id = os.environ.get("DEFAULT_USER_ID", "default_user")  # Use environment variable for user ID, default to "default_user"
-            if set_user_name(user_id, name):
-                response = f"Okay, I'll remember your name is {name}."
-                speak(response)
-                return response
-            else:
-                response = "Sorry, I couldn't store your name."
-                speak(response)
-                return response
-        else:
-            response = "Please tell me your name."
-            speak(response)
-            return response
 
-    elif "what is my name" in command:
-        user_id = os.environ.get("DEFAULT_USER_ID", "default_user")  # Use environment variable for user ID, default to "default_user"
-        name = get_user_name(user_id)
-        if name:
-            response = f"Your name is {name}."
-            speak(response)
-            return response
-        else:
-            response = "I don't know your name yet. You can tell me by saying 'My name is <your name>'."
-            speak(response)
-            return response
-
-    elif "i live in" in command:
-        location_parts = command.replace("i live in", "").strip().split()
-        if len(location_parts) >= 2:
-            city = location_parts[0]
-            state = " ".join(location_parts[1:])  # Handles multi-word state names
-            user_id = os.environ.get("DEFAULT_USER_ID", "default_user")  # Use environment variable for user ID, default to "default_user"
-            if db_utils.store_user_location(user_id, city, state):
-                response = f"Okay, I'll remember you live in {city}, {state}."
-                speak(response)
-                return response
-            else:
-                response = "Sorry, I couldn't store your location."
-                speak(response)
-                return response
-        else:
-            response = "Please tell me your city and state. For example, 'I live in London England'."
-            speak(response)
-            return response
-
-    elif "water" in command or "hydrated" in command:
-        response = "Please take a few sips of water. Staying hydrated is important."
-        speak(response)
-        return response
-
-    elif "stop listening" in command or "go to sleep" in command:
-
-        speak("Alright. Call me if you need me.")
-        
-     
-        assistant_awake = False
-        
-        return
-
-    elif "weather" in command:
-        city_match = None
-        # Simple parsing for "weather in <city>"
-        if "weather in" in command:
-            city_match = command.split("weather in", 1)[1].strip()
-        elif "weather of" in command:
-            city_match = command.split("weather of", 1)[1].strip()
-
-        if city_match:
-            city = city_match.replace("the", "").strip()
-            weather_data = db_utils.get_weather_data(city)
-            if weather_data:
-                temp = weather_data["temperature"]
-                cond = weather_data["condition"]
-                response = f"The temperature in {city} is {temp}°C with {cond} (from cache)."
-                speak(response)
-                return response
-            else:
-                # IMPORTANT: The 'demo' key for weatherapi.com is for demonstration purposes only and will not work for real requests.
-                # You need to sign up at weatherapi.com and get a free API key.
-                weather_key = os.getenv("WEATHER_API_KEY")
-                if weather_key is None:
-                    print("Log: Weather API key not found in .env file.")
-                    response = "Weather API key not found in .env file."
-                    speak(response)
-                    return response
-
-                url = f"http://api.weatherapi.com/v1/current.json?key={weather_key}&q={city}"
-                try:
-                    print(f"Log: Requesting weather data from {url}")
-                    res = requests.get(url, timeout=10)
-                    res.raise_for_status() # Raise an exception for HTTP errors
-                    data = res.json()
-                    temp = data["current"]["temp_c"]
-                    cond = data["current"]["condition"]["text"]
-                    weather_data = {"temperature": temp, "condition": cond}
-                    if db_utils.store_weather_data(city, weather_data):
-                        speak(f"The temperature in {city} is {temp}°C with {cond}.")
-                        return f"The temperature in {city} is {temp}°C with {cond}."
-                    else:
-                        speak(f"The temperature in {city} is {temp}°C with {cond}, but I couldn't save it to the cache.")
-                        return f"The temperature in {city} is {temp}°C with {cond}, but I couldn't save it to the cache."
-                except requests.exceptions.RequestException as e:
-                    response = f"Could not fetch weather for {city}. Error: {e}"
-                    speak(response)
-                    return response
-                except KeyError:
-                    response = f"Could not find weather information for {city}. Please ensure the city name is correct."
-                    speak(response)
-                    return response
-
-        # Add a return statement here
-        
-
-    elif "who is" in command or "what is" in command:
-        topic = command.replace("who is", "").replace("what is", "").strip()
-        if topic:
-            try:
-                response = f"Searching Wikipedia for {topic}..."
-                speak(response)
-                summary = wikipedia.summary(topic, sentences=2)
-                response = summary
-                speak(response)
-                return response
-            except wikipedia.exceptions.DisambiguationError as e:
-                response = f"There are multiple results for {topic}. Can you be more specific? Options include: {', '.join(e.options[:3])}."
-                speak(response)
-                return response
-            except wikipedia.exceptions.PageError:
-                response = f"Sorry, I couldn't find any information on Wikipedia about {topic}."
-                speak(response)
-                return response
-            except Exception as e:
-                response = f"An error occurred while searching Wikipedia: {e}"
-                speak(response)
-                return response
-        else:
-            response = "Please tell me who or what you want to know about."
-            speak(response)
-            return response
-
-    elif "translate" in command:
-        parts = command.split("to")
-        if len(parts) == 2:
-            text_to_translate = parts[0].replace("translate", "").strip()
-            dest_language = parts[1].strip()
-            if text_to_translate and dest_language:
-                try:
-                    response = f"Translating '{text_to_translate}' to {dest_language}..."
-                    speak(response)
-                    translated = translator.translate(text_to_translate, dest=dest_language)
-                    response = translated.text
-                    speak(translated.text, lang=dest_language)
-                    return response
-                except Exception as e:
-                    response = f"Sorry, I couldn't translate that. Error: {e}. Please ensure the language is valid (e.g., 'french', 'spanish')."
-                    speak(response)
-                    return response
-            else:
-                response = "Please say: translate <text> to <language>"
-                speak(response)
-                return response
-            
-        else:
-            response = "Please say: translate <text> to <language>"
-            speak(response)
-            return response
-
-    elif "exit" in command or "stop" in command or "quit" in command:
-        response = "Goodbye! Have a great day."
-        speak(response)
-        exit()
-
-    elif "terminate" in command:
-        response = "Terminating program."
-        speak(response)
-        exit()
-
-    else:
-        # 🩺 Health & Emotion First (OFFLINE SAFE)
-        intent = detect_health_or_emotion(command)
-
-        if intent == "health":
-            response = handle_health_issue()
-            speak(response)
-            return response
-
-        if intent == "care":
-            response = handle_care_mode()
-            speak(response)
-            return response
+    # ---------- FINAL FALLBACK ----------
+    response = "I am here with you."
+    speak(response)
+    return response
 
 
-        if intent == "emotion":
-            response = handle_emotional_support()
-            speak(response)
-            return response
 
-        # 🌐 Online AI (Gemini) if Internet Available
-        if is_internet_available():
-            speak("Let me think about that.")
-            response = get_gemini_response(command)
-            response = adjust_response(response)
-            speak(response)
-            return response
+    # ---------- FINAL FALLBACK ----------
+    speak("I am here with you.")
 
-        # 📴 Final Offline Fallback
-        response = "I'm here with you. Let's take this slowly."
-        speak(response)
-        return response
 
 # Load reward data from JSON file
 def load_reward_data():
@@ -659,12 +464,12 @@ def wake_response():
 assistant_awake = False
 
 
+assistant_awake = True   # Awake only at startup
+
+
 if __name__ == "__main__":
 
     speak(get_greeting())
-
-    # ⭐ ADD THIS LINE
-    speak("Say Jarvis whenever you need me.")
 
     while True:
 
@@ -673,10 +478,12 @@ if __name__ == "__main__":
 
             print("Waiting for wake word...")
 
-            wake = listen(show_error=False).lower()
+            wake = listen(show_error=False)
 
             if not wake:
                 continue
+
+            wake = wake.lower()
 
             if "jarvis" in wake:
                 assistant_awake = True
@@ -686,14 +493,21 @@ if __name__ == "__main__":
 
 
         # -------- ACTIVE MODE --------
-        command = listen(show_error=True).lower()
+        command = listen(show_error=True)
 
         if not command:
             continue
 
+        command = command.lower()
+
+
+        # ⭐ STOP COMMAND
         if "stop" in command or "go to sleep" in command:
+
             speak("Alright. Call me if you need me.")
             assistant_awake = False
             continue
 
+
         process_command(command)
+
