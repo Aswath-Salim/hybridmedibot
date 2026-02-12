@@ -53,6 +53,25 @@ import time
 import os
 import re
 
+MILD_HEALTH = [
+    "tired", "weak", "headache", "cold",
+    "not feeling well", "fever", "body pain"
+]
+
+WARNING_HEALTH = [
+    "dizzy", "lightheaded", "vomiting",
+    "very weak", "cannot stand"
+]
+
+EMERGENCY_HEALTH = [
+    "chest pain",
+    "can't breathe",
+    "not breathing",
+    "severe pain",
+    "heart pain",
+    "collapsed"
+]
+
 HEALTH_KEYWORDS = [
     "not feeling well", "feeling sick", "i am sick",
     "headache", "fever", "pain", "dizzy", "weak",
@@ -63,6 +82,36 @@ EMOTION_KEYWORDS = [
     "sad", "lonely", "tired", "depressed",
     "anxious", "scared", "worried", "upset"
 ]
+
+def handle_emergency():
+
+    responses = [
+        "This sounds serious. Please try to stay calm. Should I call someone for you?",
+        "I am concerned about you. Please seek immediate help. Do you want me to alert a family member?",
+        "Please do not stay alone. Try to contact someone nearby right now."
+    ]
+
+    return random.choice(responses)
+
+def handle_warning():
+
+    responses = [
+        "You may be feeling dizzy. Please sit down slowly and avoid sudden movement.",
+        "Try to drink some water and rest for a moment.",
+        "If the dizziness continues, it may be best to call someone."
+    ]
+
+    return random.choice(responses)
+
+def handle_mild():
+
+    responses = [
+        "Please get some rest. Your body may need it.",
+        "A little water and relaxation could help you feel better.",
+        "Take things slowly. I am right here with you."
+    ]
+
+    return random.choice(responses)
 
 
 def clean_text(text):
@@ -382,19 +431,32 @@ def process_command(command):
 
 
     # ---------- CARE DETECTION ----------
-    intent = detect_health_or_emotion(command)
+    def detect_health_or_emotion(command):
 
-    if intent == "health":
-        speak(handle_health_issue())
-        return
+        cmd = command.lower()
 
-    if intent == "emotion":
-        speak(handle_emotional_support())
-        return
+        for word in EMERGENCY_HEALTH:
+            if word in cmd:
+                return "emergency"
 
-    if intent == "care":
-        speak(handle_care_mode())
-        return
+        for word in WARNING_HEALTH:
+            if word in cmd:
+                return "warning"
+
+        for word in MILD_HEALTH:
+            if word in cmd:
+                return "mild"
+
+        for word in EMOTION_KEYWORDS:
+            if word in cmd:
+                return "emotion"
+
+        for word in CARE_KEYWORDS:
+            if word in cmd:
+                return "care"
+
+        return None
+
 
 
  # ---------- LOCAL LLM FIRST ----------
