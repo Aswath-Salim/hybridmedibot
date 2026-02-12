@@ -300,17 +300,36 @@ def get_feedback():
 global assistant_awake
 
 def detect_health_or_emotion(command):
-    for k in HEALTH_KEYWORDS:
-        if k in command:
-            return "health"
-    for k in EMOTION_KEYWORDS:
-        if k in command:
+
+    cmd = command.lower()
+
+    # 🚨 EMERGENCY FIRST (highest priority)
+    for word in EMERGENCY_HEALTH:
+        if word in cmd:
+            return "emergency"
+
+    # ⚠️ WARNING
+    for word in WARNING_HEALTH:
+        if word in cmd:
+            return "warning"
+
+    # 🙂 MILD
+    for word in MILD_HEALTH:
+        if word in cmd:
+            return "mild"
+
+    # ❤️ EMOTION
+    for word in EMOTION_KEYWORDS:
+        if word in cmd:
             return "emotion"
-    for k in CARE_KEYWORDS:
-        if k in command:
+
+    # 🧓 CARE
+    for word in CARE_KEYWORDS:
+        if word in cmd:
             return "care"
 
     return None
+
 
 def handle_health_issue():
     return random.choice([
@@ -431,44 +450,37 @@ def process_command(command):
 
 
     # ---------- CARE DETECTION ----------
-    def detect_health_or_emotion(command):
+    # ✅ HEALTH / EMOTION FIRST
+    intent = detect_health_or_emotion(command)
 
-        cmd = command.lower()
+    if intent == "emergency":
+        speak(handle_emergency())
+        return
 
-        for word in EMERGENCY_HEALTH:
-            if word in cmd:
-                return "emergency"
+    elif intent == "warning":
+        speak(handle_warning())
+        return
 
-        for word in WARNING_HEALTH:
-            if word in cmd:
-                return "warning"
+    elif intent == "mild":
+        speak(handle_mild())
+        return
 
-        for word in MILD_HEALTH:
-            if word in cmd:
-                return "mild"
+    elif intent == "emotion":
+        speak(handle_emotional_support())
+        return
 
-        for word in EMOTION_KEYWORDS:
-            if word in cmd:
-                return "emotion"
-
-        for word in CARE_KEYWORDS:
-            if word in cmd:
-                return "care"
-
-        return None
+    elif intent == "care":
+        speak(handle_care_mode())
+        return
 
 
-
- # ---------- LOCAL LLM FIRST ----------
+    # ✅ THEN TRY LOCAL LLM
     print("Trying LOCAL LLM...")
-
     local_reply = ask_ollama(command)
 
     if local_reply and len(local_reply.strip()) > 5:
-
-        print("LOCAL LLM USED")
         speak(local_reply)
-        return local_reply
+        return
 
 
     # ---------- CLOUD BACKUP ----------
