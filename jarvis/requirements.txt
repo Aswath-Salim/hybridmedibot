@@ -15,3 +15,4 @@ playsound==1.2.2
 PyAudio==0.2.13
 sounddevice==0.4.6
 numpy==1.26.2
+pywhatkit
